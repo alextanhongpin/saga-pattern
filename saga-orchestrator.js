@@ -3,6 +3,7 @@ import { generateId } from "./id.js";
 class OrderSaga {
   constructor(id) {
     this.id = id;
+    this.events = [];
   }
 }
 
@@ -40,19 +41,23 @@ export default class SagaOrchestrator {
     console.log("> SAGA_REPLY:", evt.type);
     let saga;
     switch (evt.type) {
-      case "ORDER_CREATED": {
+      case "ORDER_CREATED":
         // Init saga.
         const correlationId = generateId();
         saga = new OrderSaga(correlationId);
+        saga.events.push(evt.type);
         this.sagas.set(saga.id, saga);
         break;
-      }
       default:
-        const correlationId = evt.data.correlationId;
-        saga = this.sagas.get(correlationId);
+        saga = this.sagas.get(evt.data.correlationId);
+        saga.events.push(evt.type);
+        this.sagas.set(saga.id, saga);
+        break;
     }
     const task = this.stateMachine[evt.type];
     task(saga);
+
+    // TODO: Acknowledge event.
   }
 
   createPayment(saga) {
@@ -80,8 +85,8 @@ export default class SagaOrchestrator {
   }
 
   endSaga(saga) {
-    this.sagas.delete(saga.id);
     console.log(this.sagas);
+    this.sagas.delete(saga.id);
   }
 
   cancelOrder(saga) {
