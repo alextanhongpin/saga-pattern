@@ -17,20 +17,22 @@ export default class SagaOrchestrator {
     // [createPayment (PAYMENT_CREATED, PAYMENT_FAILED), cancelPayment (PAYMENT_CANCELLED)]
     // [createDelivery (DELIVERY_CREATED, DELIVERY_FAILED), cancelDelivery (DELIVERY_CANCELLED)]
     // [approveOrder (ORDER_APPROVED, ORDER_REJECTED), -]
+
+    // Maps the event to command handlers.
     this.stateMachine = {
       // Delivery.
-      DELIVERY_CREATED: this.approveOrder.bind(this),
-      DELIVERY_FAILED: this.cancelPayment.bind(this),
-      DELIVERY_CANCELLED: this.cancelPayment.bind(this),
+      DELIVERY_CREATED: this.handle("APPROVE_ORDER"),
+      DELIVERY_FAILED: this.handle("CANCEL_PAYMENT"),
+      DELIVERY_CANCELLED: this.handle("CANCEL_PAYMENT"),
 
       // Payment.
-      PAYMENT_CREATED: this.createDelivery.bind(this),
-      PAYMENT_FAILED: this.cancelOrder.bind(this),
-      PAYMENT_CANCELLED: this.cancelOrder.bind(this),
+      PAYMENT_CREATED: this.handle("CREATE_DELIVERY"),
+      PAYMENT_FAILED: this.handle("CANCEL_ORDER"),
+      PAYMENT_CANCELLED: this.handle("CANCEL_ORDER"),
 
       // Order.
-      ORDER_CREATED: this.createPayment.bind(this),
-      ORDER_REJECTED: this.cancelDelivery.bind(this),
+      ORDER_CREATED: this.handle("CREATE_PAYMENT"),
+      ORDER_REJECTED: this.handle("CANCEL_DELIVERY"),
       ORDER_APPROVED: this.endSaga.bind(this),
       ORDER_CANCELLED: this.endSaga.bind(this),
       ORDER_FAILED: this.endSaga.bind(this)
@@ -60,56 +62,16 @@ export default class SagaOrchestrator {
     // TODO: Acknowledge event.
   }
 
-  createPayment(saga) {
-    const cmd = {
-      type: "CREATE_PAYMENT",
-      correlationId: saga.id
+  // Event handlers triggers the command handlers.
+  handle(type) {
+    return saga => {
+      const cmd = { type, correlationId: saga.id };
+      this.bus.emit(cmd.type, cmd);
     };
-    this.bus.emit(cmd.type, cmd);
-  }
-
-  createDelivery(saga) {
-    const cmd = {
-      type: "CREATE_DELIVERY",
-      correlationId: saga.id
-    };
-    this.bus.emit(cmd.type, cmd);
-  }
-
-  approveOrder(saga) {
-    const cmd = {
-      type: "APPROVE_ORDER",
-      correlationId: saga.id
-    };
-    this.bus.emit(cmd.type, cmd);
   }
 
   endSaga(saga) {
     console.log(this.sagas);
     this.sagas.delete(saga.id);
-  }
-
-  cancelOrder(saga) {
-    const cmd = {
-      type: "CANCEL_ORDER",
-      correlationId: saga.id
-    };
-    this.bus.emit(cmd.type, cmd);
-  }
-
-  cancelPayment(saga) {
-    const cmd = {
-      type: "CANCEL_PAYMENT",
-      correlationId: saga.id
-    };
-    this.bus.emit(cmd.type, cmd);
-  }
-
-  cancelDelivery(saga) {
-    const cmd = {
-      type: "CANCEL_DELIVERY",
-      correlationId: saga.id
-    };
-    this.bus.emit(cmd.type, cmd);
   }
 }

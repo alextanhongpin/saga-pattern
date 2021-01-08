@@ -16,6 +16,7 @@ export default class DeliveryService {
   onCreate() {
     return true;
   }
+
   create(data) {
     console.log("creating delivery");
     const type = this.onCreate() ? "DELIVERY_CREATED" : "DELIVERY_FAILED";
@@ -24,12 +25,14 @@ export default class DeliveryService {
     const evt = this.eventStore.create({ type, data });
     this.bus.emit(type, evt);
   }
+
   cancel(data) {
     console.log("cancelling delivery");
     const type = "DELIVERY_CANCELLED";
     const evt = this.eventStore.create({ type, data });
     this.bus.emit(type, evt);
   }
+
   publish(evt) {
     this.bus.emit("SAGA_REPLY", evt);
     this.eventStore.delete(evt.id);
