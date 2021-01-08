@@ -9,6 +9,7 @@ export default class OrderService {
     // Event handlers.
     this.bus.on("ORDER_CREATED", this.publish.bind(this));
     this.bus.on("ORDER_CANCELLED", this.publish.bind(this));
+    this.bus.on("ORDER_FAILED", this.publish.bind(this));
     this.bus.on("ORDER_APPROVED", this.publish.bind(this));
     this.bus.on("ORDER_REJECTED", this.publish.bind(this));
   }

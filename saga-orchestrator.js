@@ -12,21 +12,27 @@ export default class SagaOrchestrator {
     this.bus = bus;
     this.bus.on("SAGA_REPLY", this.reply.bind(this));
     // Visualization:
-    // [createOrder, cancelOrder]
-    // [createPayment, cancelPayment]
-    // [createDelivery, cancelDelivery]
-    // [approveOrder, -]
+    // [createOrder (ORDER_CREATED, ORDER_FAILED), cancelOrder (ORDER_CANCELLED)]
+    // [createPayment (PAYMENT_CREATED, PAYMENT_FAILED), cancelPayment (PAYMENT_CANCELLED)]
+    // [createDelivery (DELIVERY_CREATED, DELIVERY_FAILED), cancelDelivery (DELIVERY_CANCELLED)]
+    // [approveOrder (ORDER_APPROVED, ORDER_REJECTED), -]
     this.stateMachine = {
+      // Delivery.
       DELIVERY_CREATED: this.approveOrder.bind(this),
       DELIVERY_FAILED: this.cancelPayment.bind(this),
       DELIVERY_CANCELLED: this.cancelPayment.bind(this),
+
+      // Payment.
       PAYMENT_CREATED: this.createDelivery.bind(this),
       PAYMENT_FAILED: this.cancelOrder.bind(this),
       PAYMENT_CANCELLED: this.cancelOrder.bind(this),
+
+      // Order.
       ORDER_CREATED: this.createPayment.bind(this),
       ORDER_REJECTED: this.cancelDelivery.bind(this),
       ORDER_APPROVED: this.endSaga.bind(this),
-      ORDER_CANCELLED: this.endSaga.bind(this)
+      ORDER_CANCELLED: this.endSaga.bind(this),
+      ORDER_FAILED: this.endSaga.bind(this)
     };
   }
 
