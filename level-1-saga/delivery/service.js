@@ -1,9 +1,9 @@
 import poolEvent from "../common/pool-event.js";
 
-export default class PaymentService {
+export default class DeliveryService {
   constructor({ db, consumer, producer }) {
     this.db = db;
-    this.db.query(`SET search_path TO payment, public`);
+    this.db.query(`SET search_path TO delivery, public`);
 
     this.producer = producer;
     this.consumer = consumer;
@@ -21,10 +21,10 @@ export default class PaymentService {
   async consume(cmd) {
     try {
       switch (cmd.type) {
-        case "CREATE_PAYMENT":
+        case "CREATE_DELIVERY":
           await this.create(cmd.payload);
           break;
-        case "CANCEL_PAYMENT":
+        case "CANCEL_DELIVERY":
           await this.cancel(cmd.payload);
           break;
         default:
@@ -40,8 +40,8 @@ export default class PaymentService {
 
   async migrate() {
     const result = await this.db.query(`
-    CREATE SCHEMA IF NOT EXISTS payment;
-    CREATE TABLE IF NOT EXISTS payment.entity(
+    CREATE SCHEMA IF NOT EXISTS delivery;
+    CREATE TABLE IF NOT EXISTS delivery.entity(
       id uuid DEFAULT gen_random_uuid(),
       name text NOT NULL,
       status text NOT NULL,
@@ -50,7 +50,7 @@ export default class PaymentService {
       updated_at timestamptz NOT NULL DEFAULT current_timestamp
     );
 
-    CREATE TABLE IF NOT EXISTS payment.event (
+    CREATE TABLE IF NOT EXISTS delivery.event (
       id bigint GENERATED ALWAYS AS IDENTITY,
       action text NOT NULL,
       object text NOT NULL,
@@ -60,42 +60,42 @@ export default class PaymentService {
   }
 
   async create({ name, orderId }) {
-    console.log(`[${this.constructor.name}] createPayment`, { name, orderId });
+    console.log(`[${this.constructor.name}] createDelivery`, { name, orderId });
     const result = await this.db.query(
       `
-      WITH payment_created AS (
-        INSERT INTO payment.entity (name, status, order_id) VALUES ($1, $2, $3)
+      WITH delivery_created AS (
+        INSERT INTO delivery.entity (name, status, order_id) VALUES ($1, $2, $3)
         RETURNING *
       ), event_inserted AS (
-        INSERT INTO payment.event (action, object, data) 
-        VALUES ('payment_created', 'payment', (SELECT row_to_json(payment_created.*) FROM payment_created))
+        INSERT INTO delivery.event (action, object, data) 
+        VALUES ('delivery_created', 'delivery', (SELECT row_to_json(delivery_created.*) FROM delivery_created))
       )
-      SELECT * FROM payment_created
+      SELECT * FROM delivery_created
     `,
       [name, "pending", orderId]
     );
-    const payment = result.rows[0];
-    return payment;
+    const delivery = result.rows[0];
+    return delivery;
   }
 
   async cancel({ orderId }) {
-    console.log("cancelPayment", { orderId });
+    console.log("cancelDelivery", { orderId });
     const result = await this.db.query(
       `
-      WITH payment_cancelled AS (
-        UPDATE payment SET status = 'cancelled'
+      WITH delivery_cancelled AS (
+        UPDATE delivery SET status = 'cancelled'
         WHERE order_id = $1
         RETURNING *
       ), event_inserted AS (
-        INSERT INTO payment.event (action, object, data) 
-        VALUES ('payment_cancelled', 'payment', (SELECT row_to_json(payment_cancelled.*) FROM payment_cancelled))
+        INSERT INTO delivery.event (action, object, data) 
+        VALUES ('delivery_cancelled', 'delivery', (SELECT row_to_json(delivery_cancelled.*) FROM delivery_cancelled))
       )
-      SELECT * FROM payment_cancelled
+      SELECT * FROM delivery_cancelled
     `,
       [orderId]
     );
 
-    const payment = result.rows[0];
-    return payment;
+    const delivery = result.rows[0];
+    return delivery;
   }
 }

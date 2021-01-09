@@ -14,8 +14,8 @@ const redis = new Redis();
 const producer = new Producer({ redis, stream: "saga_reply_stream" });
 const consumer = new Consumer({
   redis,
-  group: "payment_cg", // cg - consumer group.
-  stream: "payment_stream",
+  group: "delivery_cg", // cg - consumer group.
+  stream: "delivery_stream",
   consumer: "node:1"
 });
 // NOTE: This needs to be created before publishing message.
