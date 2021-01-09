@@ -1,106 +1,57 @@
 import poolEvent from "../common/pool-event.js";
 
 export default class DeliveryService {
-  constructor({ db, consumer, producer }) {
-    this.db = db;
-    this.db.query(`SET search_path TO delivery, public`);
-
-    this.producer = producer;
+  constructor({ repository, consumer, producer }) {
+    this.repository = repository;
     this.consumer = consumer;
+    this.producer = producer;
 
-    this.migrate();
+    this.initConsumer();
+    this.initProducer();
 
-    setInterval(
-      () =>
-        poolEvent(this.db, evt => {
-          console.log(`[${this.identity}] publishEvent`, evt);
-          this.producer.publish(evt);
-        }),
-      1000
-    );
-    setInterval(() => consumer.consume(cmd => this.consume(cmd)), 1000);
+    this.commandHandlers = {
+      CREATE_DELIVERY: this.create.bind(this),
+      CANCEL_DELIVERY: this.cancel.bind(this)
+    };
   }
 
-  // Receive commands.
-  async consume(cmd) {
-    console.log(`[${this.identity}] consume`, cmd);
-    try {
-      switch (cmd.type) {
-        case "CREATE_DELIVERY":
-          await this.create(cmd.payload);
-          break;
-        case "CANCEL_DELIVERY":
-          await this.cancel(cmd.payload);
-          break;
-        default:
-          return false;
-      }
-      // Return true for acknowledgement.
-      return true;
-    } catch (error) {
-      console.log(error);
-      return false;
+  initConsumer() {
+    setInterval(() => {
+      this.consumer.consume(cmd => {
+        console.log(`[${this.identity}] listenCommand`, cmd);
+        this.commandProcessor(cmd);
+      });
+    }, 1000);
+  }
+
+  initProducer() {
+    setInterval(() => {
+      this.repository.pool(evt => {
+        console.log(`[${this.identity}] publishEvent`, evt);
+        this.producer.publish(evt);
+      });
+    }, 1000);
+  }
+
+  commandProcessor(cmd) {
+    const handler = this.commandHandlers[cmd.action];
+    if (!handler) {
+      throw new Error(`command "${cmd.action}" not implemented`);
     }
+    return handler(cmd.payload.data);
   }
 
-  async migrate() {
-    const result = await this.db.query(`
-    CREATE SCHEMA IF NOT EXISTS delivery;
-    CREATE TABLE IF NOT EXISTS delivery.entity(
-      id uuid DEFAULT gen_random_uuid(),
-      name text NOT NULL,
-      status text NOT NULL,
-      order_id uuid NOT NULL,
-      created_at timestamptz NOT NULL DEFAULT current_timestamp,
-      updated_at timestamptz NOT NULL DEFAULT current_timestamp
-    );
-
-    CREATE TABLE IF NOT EXISTS delivery.event (
-      id bigint GENERATED ALWAYS AS IDENTITY,
-      action text NOT NULL,
-      object text NOT NULL,
-      data jsonb NOT NULL DEFAULT '{}'
-    );`);
-    return result.length;
-  }
-
-  async create({ name, orderId }) {
+  async create({ name, correlationId: orderId }) {
     console.log(`[${this.identity}] createDelivery`, { name, orderId });
-    const result = await this.db.query(
-      `
-      WITH delivery_created AS (
-        INSERT INTO delivery.entity (name, status, order_id) VALUES ($1, $2, $3)
-        RETURNING *
-      ), event_inserted AS (
-        INSERT INTO delivery.event (action, object, data) 
-        VALUES ('DELIVERY_CREATED', 'delivery', (SELECT row_to_json(delivery_created.*) FROM delivery_created))
-      )
-      SELECT * FROM delivery_created
-    `,
-      [name, "pending", orderId]
-    );
-    const delivery = result.rows[0];
+
+    const delivery = await this.repository.create({ name, orderId });
     return delivery;
   }
 
-  async cancel({ orderId }) {
+  async cancel({ correlationId: orderId }) {
     console.log(`[${this.identity}] cancelDelivery`, { orderId });
-    const result = await this.db.query(
-      `
-      WITH delivery_cancelled AS (
-        UPDATE delivery.entity SET status = 'cancelled'
-        WHERE order_id = $1
-        RETURNING *
-      ), event_inserted AS (
-        INSERT INTO delivery.event (action, object, data) 
-        VALUES ('DELIVERY_CANCELLED', 'delivery', (SELECT row_to_json(delivery_cancelled.*) FROM delivery_cancelled))
-      )
-      SELECT * FROM delivery_cancelled
-    `,
-      [orderId]
-    );
 
-    const delivery = result.rows[0];
+    const delivery = await this.repository.cancel({ orderId });
     return delivery;
   }
 

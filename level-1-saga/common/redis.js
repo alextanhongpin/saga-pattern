@@ -20,42 +20,56 @@ export class Producer {
   }
 }
 
+function checkConsumerGroupExistence(error) {
+  // Consumer already exists.
+  if (error.message.startsWith("BUSYGROUP")) {
+    return;
+  }
+  throw error;
+}
+
 export class Consumer {
   #checkBacklog = true;
+  #consumerGroupCreated = false;
 
   constructor({ redis, group, stream, consumer }) {
     this.redis = redis;
     this.group = group;
     this.stream = stream;
     this.consumer = consumer;
+
+    this.ensureConsumerGroupCreated();
   }
 
-  async createConsumerGroup() {
+  async ensureConsumerGroupCreated() {
+    if (this.#consumerGroupCreated) return;
     try {
-      await this.redis.xgroup(
+      this.#consumerGroupCreated = await this.redis.xgroup(
         "CREATE",
         this.stream,
         this.group,
-        "$",
+        // NOTE: Means listening to all records, including those historical
+        // ones. If we set to `$` instead, it will only listen to new ones.
+        // However, if we register the consumer after a record has been
+        // streamed, we will not get them. This is important when coordinating
+        // between different services - we do not want to depend on the
+        // sequence of creation of the consumer group.
+        "0",
         "MKSTREAM"
       );
     } catch (error) {
-      if (error.message.startsWith("BUSYGROUP")) {
-        console.log("consumer exists");
-        return;
-      }
-      throw error;
+      checkConsumerGroupExistence(error);
     }
   }
 
-  async consume(asyncBoolFn) {
-    let startId = this.#checkBacklog ? 0 : ">";
+  async consume(asyncTask, limit = 10) {
+    let startId = this.#checkBacklog ? "0" : ">";
     const streams = await this.redis.xreadgroup(
       "GROUP",
       this.group,
       this.consumer,
       "COUNT",
-      10,
+      limit,
       "STREAMS",
       this.stream,
       startId
@@ -69,9 +83,12 @@ export class Consumer {
       const [redisId, fields] = record;
       const event = RedisObject.fromArray(fields);
 
-      const ack = await asyncBoolFn(event);
-
-      ack && (await this.redis.xack(this.stream, this.group, redisId));
+      try {
+        await asyncTask(event);
+        await this.redis.xack(this.stream, this.group, redisId);
+      } catch (error) {
+        throw error;
+      }
     }
     return true;
   }

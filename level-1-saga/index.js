@@ -2,9 +2,14 @@ import Redis from "ioredis";
 import createDb from "./common/db.js";
 import createApp from "./common/app.js";
 import { Producer, Consumer } from "./common/redis.js";
-import SagaExecutionCoordinator from "./saga-execution-coordinator.js";
+
+import migrate from "./saga/migrate.js";
+import Repository from "./saga/repository.js";
+import SagaExecutionCoordinator from "./saga/service.js";
 
 const db = await createDb();
+await migrate(db);
+
 const redis = new Redis();
 
 const consumer = new Consumer({
@@ -13,11 +18,10 @@ const consumer = new Consumer({
   stream: "saga_reply_stream",
   consumer: "node:1"
 });
-// NOTE: This needs to be created before publishing message.
-await consumer.createConsumerGroup();
 
+const repository = new Repository(db);
 const sagaExecutionCoordinator = new SagaExecutionCoordinator({
-  db,
+  repository,
   consumer,
   paymentProducer: new Producer({ redis, stream: "payment_stream" }),
   orderProducer: new Producer({ redis, stream: "order_stream" }),

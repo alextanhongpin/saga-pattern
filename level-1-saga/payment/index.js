@@ -1,14 +1,16 @@
-import * as uuid from "uuid";
 import Redis from "ioredis";
 
 import createApp from "../common/app.js";
 import createDb from "../common/db.js";
 import { Producer, Consumer } from "../common/redis.js";
 
-// Services.
+import migrate from "./migrate.js";
+import Repository from "./repository.js";
 import Service from "./service.js";
 
 const db = await createDb();
+await migrate(db);
+
 const redis = new Redis();
 
 const producer = new Producer({ redis, stream: "saga_reply_stream" });
@@ -18,9 +20,8 @@ const consumer = new Consumer({
   stream: "payment_stream",
   consumer: "node:1"
 });
-// NOTE: This needs to be created before publishing message.
-await consumer.createConsumerGroup();
 
-const service = new Service({ db, consumer, producer });
+const repository = new Repository(db);
+const service = new Service({ repository, consumer, producer });
 
 createApp();

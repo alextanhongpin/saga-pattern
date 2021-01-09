@@ -1,152 +1,66 @@
-import poolEvent from "../common/pool-event.js";
-
 export default class OrderService {
-  constructor({ db, consumer, producer }) {
-    this.db = db;
-    this.db.query(`SET search_path TO "order", public`);
-
-    this.producer = producer;
+  constructor({ repository, consumer, producer }) {
+    this.repository = repository;
     this.consumer = consumer;
+    this.producer = producer;
 
-    this.migrate();
+    this.initConsumer();
+    this.initProducer();
 
-    setInterval(
-      () =>
-        poolEvent(this.db, evt => {
-          console.log(`[${this.identity}] publishEvent`, evt);
-          this.producer.publish(evt);
-        }),
-      1000
-    );
-    setInterval(() => consumer.consume(cmd => this.consume(cmd)), 1000);
+    this.commandHandlers = {
+      APPROVE_ORDER: this.approve.bind(this),
+      CREATE_ORDER: this.create.bind(this),
+      CANCEL_ORDER: this.cancel.bind(this)
+    };
   }
 
-  // Receive commands.
-  async consume(cmd) {
-    console.log(`[${this.identity}] consume`, cmd);
-    try {
-      switch (cmd.type) {
-        case "APPROVE_ORDER":
-          await this.approve(cmd.payload);
-          break;
-        case "CREATE_ORDER":
-          await this.create(cmd.payload);
-          break;
-        case "CANCEL_ORDER":
-          await this.cancel(cmd.payload);
-          break;
-        default:
-          return false;
-      }
-      // Return true for acknowledgement.
-      return true;
-    } catch (error) {
-      console.log(error);
-      return false;
+  initConsumer() {
+    setInterval(() => {
+      this.consumer.consume(cmd => {
+        console.log(`[${this.identity}] listenCommand`, cmd);
+        return this.commandProcessor(cmd);
+      });
+    }, 1000);
+  }
+
+  initProducer() {
+    setInterval(() => {
+      this.repository.pool(evt => {
+        console.log(`[${this.identity}] publishEvent`, evt);
+        return this.producer.publish(evt);
+      });
+    }, 1000);
+  }
+
+  commandProcessor(cmd) {
+    const handler = this.commandHandlers[cmd.action];
+    if (!handler) {
+      throw new Error(`command "${cmd.action}" not implemented`);
     }
-  }
-
-  async migrate() {
-    const result = await this.db.query(`
-    CREATE SCHEMA IF NOT EXISTS "order";
-    CREATE TABLE IF NOT EXISTS "order".entity(
-      id uuid DEFAULT gen_random_uuid(),
-      name text NOT NULL,
-      status text NOT NULL,
-      created_at timestamptz NOT NULL DEFAULT current_timestamp,
-      updated_at timestamptz NOT NULL DEFAULT current_timestamp
-    );
-
-    CREATE TABLE IF NOT EXISTS "order".event (
-      id bigint GENERATED ALWAYS AS IDENTITY,
-      action text NOT NULL,
-      object text NOT NULL,
-      data jsonb NOT NULL DEFAULT '{}'
-    );`);
-    return result.length;
+    return handler(cmd.payload.data);
   }
 
   async create({ name, orderId }) {
     console.log(`[${this.identity}] createOrder`, { name, orderId });
-    const result = await this.db.query(
-      `
-      WITH order_created AS (
-        INSERT INTO "order".entity (name, status) 
-        VALUES ($1, $2)
-        RETURNING *
-      ), event_inserted AS (
-        INSERT INTO "order".event (action, object, data) 
-        VALUES ('ORDER_CREATED', 'order', (SELECT row_to_json(order_created.*) FROM order_created))
-      )
-      SELECT * FROM order_created
-    `,
-      [name, "pending"]
-    );
-    const order = result.rows[0];
+
+    const order = await this.repository.create({ name, orderId });
     return order;
   }
 
-  async cancel({ orderId }) {
+  async cancel({ correlationId: orderId }) {
     console.log(`[${this.identity}] cancelOrder`, { orderId });
-    const result = await this.db.query(
-      `
-      WITH order_cancelled AS (
-        UPDATE "order".entity SET status = 'cancelled'
-        WHERE id = $1
-        RETURNING *
-      ), event_inserted AS (
-        INSERT INTO "order".event (action, object, data) 
-        VALUES ('ORDER_CANCELLED', 'order', (SELECT row_to_json(order_cancelled.*) FROM order_cancelled))
-      )
-      SELECT * FROM order_cancelled
-    `,
-      [orderId]
-    );
 
-    const order = result.rows[0];
+    const order = await this.repository.cancel({ orderId });
     return order;
   }
 
-  async approve({ orderId }) {
+  async approve({ correlationId: orderId }) {
     console.log(`[${this.identity}] approveOrder`, { orderId });
+
     const approve = true;
-    if (approve) {
-      const result = await this.db.query(
-        `
-      WITH order_approved AS (
-        UPDATE "order".entity SET status = 'approved'
-        WHERE id = $1
-        RETURNING *
-      ), event_inserted AS (
-        INSERT INTO "order".event (action, object, data) 
-        VALUES ('ORDER_APPROVED', 'order', (SELECT row_to_json(order_approved.*) FROM order_approved))
-      )
-      SELECT * FROM order_approved
-    `,
-        [orderId]
-      );
-
-      const order = result.rows[0];
-      return order;
-    } else {
-      const result = await this.db.query(
-        `
-      WITH order_rejected AS (
-        UPDATE "order".entity SET status = 'rejected'
-        WHERE id = $1
-        RETURNING *
-      ), event_inserted AS (
-        INSERT INTO "order".event (action, object, data) 
-        VALUES ('ORDER_REJECTED', 'order', (SELECT row_to_json(order_rejected.*) FROM order_rejected))
-      )
-      SELECT * FROM order_rejected
-    `,
-        [orderId]
-      );
-
-      const order = result.rows[0];
-      return order;
-    }
+    return approve
+      ? this.repository.approve({ orderId })
+      : this.repository.reject({ orderId });
   }
 
   get identity() {
