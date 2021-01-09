@@ -11,7 +11,11 @@ export default class DeliveryService {
     this.migrate();
 
     setInterval(
-      () => poolEvent(this.db, evt => this.producer.publish(evt)),
+      () =>
+        poolEvent(this.db, evt => {
+          console.log(`[${this.identity}] publishEvent`, evt);
+          this.producer.publish(evt);
+        }),
       1000
     );
     setInterval(() => consumer.consume(cmd => this.consume(cmd)), 1000);
@@ -19,6 +23,7 @@ export default class DeliveryService {
 
   // Receive commands.
   async consume(cmd) {
+    console.log(`[${this.identity}] consume`, cmd);
     try {
       switch (cmd.type) {
         case "CREATE_DELIVERY":
@@ -60,7 +65,7 @@ export default class DeliveryService {
   }
 
   async create({ name, orderId }) {
-    console.log(`[${this.constructor.name}] createDelivery`, { name, orderId });
+    console.log(`[${this.identity}] createDelivery`, { name, orderId });
     const result = await this.db.query(
       `
       WITH delivery_created AS (
@@ -68,7 +73,7 @@ export default class DeliveryService {
         RETURNING *
       ), event_inserted AS (
         INSERT INTO delivery.event (action, object, data) 
-        VALUES ('delivery_created', 'delivery', (SELECT row_to_json(delivery_created.*) FROM delivery_created))
+        VALUES ('DELIVERY_CREATED', 'delivery', (SELECT row_to_json(delivery_created.*) FROM delivery_created))
       )
       SELECT * FROM delivery_created
     `,
@@ -79,16 +84,16 @@ export default class DeliveryService {
   }
 
   async cancel({ orderId }) {
-    console.log("cancelDelivery", { orderId });
+    console.log(`[${this.identity}] cancelDelivery`, { orderId });
     const result = await this.db.query(
       `
       WITH delivery_cancelled AS (
-        UPDATE delivery SET status = 'cancelled'
+        UPDATE delivery.entity SET status = 'cancelled'
         WHERE order_id = $1
         RETURNING *
       ), event_inserted AS (
         INSERT INTO delivery.event (action, object, data) 
-        VALUES ('delivery_cancelled', 'delivery', (SELECT row_to_json(delivery_cancelled.*) FROM delivery_cancelled))
+        VALUES ('DELIVERY_CANCELLED', 'delivery', (SELECT row_to_json(delivery_cancelled.*) FROM delivery_cancelled))
       )
       SELECT * FROM delivery_cancelled
     `,
@@ -97,5 +102,9 @@ export default class DeliveryService {
 
     const delivery = result.rows[0];
     return delivery;
+  }
+
+  get identity() {
+    return this.constructor.name;
   }
 }

@@ -1,6 +1,4 @@
-function isObject(o) {
-  return typeof o === "object";
-}
+import isObject from "./object.js";
 
 export default class RedisObject {
   // Transform an object to an array of key-value pairs,

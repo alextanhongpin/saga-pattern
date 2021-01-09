@@ -22,6 +22,5 @@ const consumer = new Consumer({
 await consumer.createConsumerGroup();
 
 const service = new Service({ db, consumer, producer });
-await service.create({ name: "hello", orderId: uuid.v4() });
 
 createApp();
