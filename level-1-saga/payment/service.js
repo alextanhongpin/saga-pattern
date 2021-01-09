@@ -1,4 +1,4 @@
-import poolEvent from "./common/pool-event.js";
+import poolEvent from "../common/pool-event.js";
 
 export default class PaymentService {
   constructor({ db, consumer, producer }) {
@@ -19,7 +19,6 @@ export default class PaymentService {
 
   // Receive commands.
   async consume(cmd) {
-    console.log("consumer", cmd);
     try {
       switch (cmd.type) {
         case "CREATE_PAYMENT":
@@ -61,7 +60,7 @@ export default class PaymentService {
   }
 
   async create({ name, orderId }) {
-    console.log("createPayment", { name, orderId });
+    console.log(`[${this.constructor.name}] createPayment`, { name, orderId });
     const result = await this.db.query(
       `
       WITH payment_created AS (

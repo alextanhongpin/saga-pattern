@@ -7,5 +7,5 @@ up:
 down:
 	@docker-compose down
 
-start:
-	@node index.js
+start-%:
+	@node $*/index.js
