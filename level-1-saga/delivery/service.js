@@ -10,8 +10,8 @@ export default class DeliveryService {
     this.initProducer();
 
     this.commandHandlers = {
-      CREATE_DELIVERY: this.create.bind(this),
-      CANCEL_DELIVERY: this.cancel.bind(this)
+      CREATE_DELIVERY: cmd => this.create(cmd),
+      CANCEL_DELIVERY: cmd => this.cancel(cmd)
     };
   }
 
@@ -19,7 +19,8 @@ export default class DeliveryService {
     setInterval(() => {
       this.consumer.consume(cmd => {
         console.log(`[${this.identity}] listenCommand`, cmd);
-        this.commandProcessor(cmd);
+
+        return this.commandProcessor(cmd);
       });
     }, 1000);
   }
@@ -28,7 +29,8 @@ export default class DeliveryService {
     setInterval(() => {
       this.repository.pool(evt => {
         console.log(`[${this.identity}] publishEvent`, evt);
-        this.producer.publish(evt);
+
+        return this.producer.publish(evt);
       });
     }, 1000);
   }
@@ -38,21 +40,19 @@ export default class DeliveryService {
     if (!handler) {
       throw new Error(`command "${cmd.action}" not implemented`);
     }
-    return handler(cmd.payload.data);
+    return handler(cmd.payload);
   }
 
-  async create({ name, correlationId: orderId }) {
+  create({ name, correlationId: orderId }) {
     console.log(`[${this.identity}] createDelivery`, { name, orderId });
 
-    const delivery = await this.repository.create({ name, orderId });
-    return delivery;
+    return this.repository.create({ name, orderId });
   }
 
-  async cancel({ correlationId: orderId }) {
+  cancel({ correlationId: orderId }) {
     console.log(`[${this.identity}] cancelDelivery`, { orderId });
 
-    const delivery = await this.repository.cancel({ orderId });
-    return delivery;
+    return this.repository.cancel({ orderId });
   }
 
   get identity() {

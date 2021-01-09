@@ -73,7 +73,7 @@ export default class OrderRepository {
     this.db.query('SET search_path TO "order", public');
   }
 
-  async create({ name, orderId }) {
+  async create({ name }) {
     const values = [name, "pending"];
     const result = await this.db.query(CREATE, values);
     return result.rows[0];

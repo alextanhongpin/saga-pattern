@@ -8,9 +8,9 @@ export default class OrderService {
     this.initProducer();
 
     this.commandHandlers = {
-      APPROVE_ORDER: this.approve.bind(this),
-      CREATE_ORDER: this.create.bind(this),
-      CANCEL_ORDER: this.cancel.bind(this)
+      APPROVE_ORDER: cmd => this.approve(cmd),
+      CREATE_ORDER: cmd => this.create(cmd),
+      CANCEL_ORDER: cmd => this.cancel(cmd)
     };
   }
 
@@ -18,6 +18,7 @@ export default class OrderService {
     setInterval(() => {
       this.consumer.consume(cmd => {
         console.log(`[${this.identity}] listenCommand`, cmd);
+
         return this.commandProcessor(cmd);
       });
     }, 1000);
@@ -27,6 +28,7 @@ export default class OrderService {
     setInterval(() => {
       this.repository.pool(evt => {
         console.log(`[${this.identity}] publishEvent`, evt);
+
         return this.producer.publish(evt);
       });
     }, 1000);
@@ -37,24 +39,22 @@ export default class OrderService {
     if (!handler) {
       throw new Error(`command "${cmd.action}" not implemented`);
     }
-    return handler(cmd.payload.data);
+    return handler(cmd.payload);
   }
 
-  async create({ name, orderId }) {
-    console.log(`[${this.identity}] createOrder`, { name, orderId });
+  create({ name }) {
+    console.log(`[${this.identity}] createOrder`, { name });
 
-    const order = await this.repository.create({ name, orderId });
-    return order;
+    return this.repository.create({ name });
   }
 
-  async cancel({ correlationId: orderId }) {
+  cancel({ correlationId: orderId }) {
     console.log(`[${this.identity}] cancelOrder`, { orderId });
 
-    const order = await this.repository.cancel({ orderId });
-    return order;
+    return this.repository.cancel({ orderId });
   }
 
-  async approve({ correlationId: orderId }) {
+  approve({ correlationId: orderId }) {
     console.log(`[${this.identity}] approveOrder`, { orderId });
 
     const approve = true;

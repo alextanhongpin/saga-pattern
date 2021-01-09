@@ -26,51 +26,31 @@ export default class SagaExecutionCoordinator {
     this.eventHandlers = {
       // Happy-path.
       ORDER_CREATED: this.initSaga(
-        this.handleCommand("payment", "CREATE_PAYMENT")
+        this.publishCommand("payment", "CREATE_PAYMENT")
       ),
-      PAYMENT_CREATED: this.handleCommand("delivery", "CREATE_DELIVERY"),
-      DELIVERY_CREATED: this.handleCommand("order", "APPROVE_ORDER"),
-      ORDER_APPROVED: this.endSaga.bind(this),
+      PAYMENT_CREATED: this.publishCommand("delivery", "CREATE_DELIVERY"),
+      DELIVERY_CREATED: this.publishCommand("order", "APPROVE_ORDER"),
+      ORDER_APPROVED: evt => this.endSaga(evt),
 
       // Sad-path...
-      ORDER_REJECTED: this.handleCommand("delivery", "CANCEL_DELIVERY"),
-      DELIVERY_CANCELLED: this.handleCommand("payment", "CANCEL_PAYMENT"),
-      PAYMENT_CANCELLED: this.handleCommand("order", "CANCEL_ORDER"),
-      PAYMENT_REJECTED: this.handleCommand("order", "CANCEL_ORDER"),
-      ORDER_CANCELLED: this.endSaga.bind(this)
+      ORDER_REJECTED: this.publishCommand("delivery", "CANCEL_DELIVERY"),
+      DELIVERY_CANCELLED: this.publishCommand("payment", "CANCEL_PAYMENT"),
+      PAYMENT_CANCELLED: this.publishCommand("order", "CANCEL_ORDER"),
+      PAYMENT_REJECTED: this.publishCommand("order", "CANCEL_ORDER"),
+      ORDER_CANCELLED: evt => this.endSaga(evt)
     };
   }
 
-  updateSaga(correlationId, data) {
-    return this.repository.update({ correlationId, data });
-  }
-
-  deleteSaga(id, data) {
-    return this.repository.delete({ id, data });
-  }
-
-  createSaga(correlationId) {
-    return this.repository.create({
-      correlationId,
-      name: "CREATE_ORDER_SAGA"
-    });
-  }
-
-  fetchSaga(correlationId) {
-    return this.repository.findOneByCorrelationId(correlationId);
-  }
-
-  async endSaga(event) {
-    const saga = await this.fetchSaga(event.data.correlationId);
-    const deleted = await this.deleteSaga(saga.id, { event });
-    console.log(deleted);
+  async endSaga(payload) {
+    const saga = await this.fetchSaga(payload.correlationId);
+    const deleted = await this.deleteSaga(saga.id);
     return deleted;
   }
 
   async initSaga(handler) {
-    return async event => {
-      const saga = await this.createSaga(event.data.correlationId);
-      return handler(event);
+    return async payload => {
+      const saga = await this.createSaga(payload.correlationId);
+      return handler(payload);
     };
   }
 
@@ -83,7 +63,7 @@ export default class SagaExecutionCoordinator {
       throw new Error(`handler "${action}" not implemented`);
     }
 
-    const { command, streamId } = await handler(event);
+    const { command, streamId } = await handler(event.data);
     await this.updateSaga(event.data.correlationId, {
       event,
       command,
@@ -91,7 +71,7 @@ export default class SagaExecutionCoordinator {
     });
   }
 
-  handleCommand(object, action) {
+  publishCommand(object, action) {
     return async payload => {
       console.log(`[${this.identity}]: handle ${object} command`, {
         action,
@@ -100,10 +80,29 @@ export default class SagaExecutionCoordinator {
       const command = { action, payload };
       const streamId = await this[object + "Producer"].publish(command);
       return {
-        command,
+        command: { action },
         streamId
       };
     };
+  }
+
+  updateSaga(correlationId, data) {
+    return this.repository.update({ correlationId, data });
+  }
+
+  deleteSaga(id) {
+    return this.repository.delete({ id });
+  }
+
+  createSaga(correlationId) {
+    return this.repository.create({
+      correlationId,
+      name: "CREATE_ORDER_SAGA"
+    });
+  }
+
+  fetchSaga(correlationId) {
+    return this.repository.findOneByCorrelationId(correlationId);
   }
 
   get identity() {

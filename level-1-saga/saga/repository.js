@@ -14,9 +14,8 @@ const UPDATE = `
 
 const SOFT_DELETE = `
   UPDATE saga_state 
-  SET history = array_append(history, $1),
-      deleted_at = current_timestamp 
-  WHERE id = $2
+  SET deleted_at = current_timestamp 
+  WHERE id = $1
   RETURNING *
 `;
 
@@ -43,8 +42,8 @@ export default class SagaRepository {
     return result.rows[0];
   }
 
-  async delete({ data, id }) {
-    const values = [data, id];
+  async delete({ id }) {
+    const values = [id];
     const result = await this.db.query(SOFT_DELETE, values);
     return result.rows[0];
   }

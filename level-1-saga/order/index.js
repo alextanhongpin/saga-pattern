@@ -1,4 +1,3 @@
-import * as uuid from "uuid";
 import Redis from "ioredis";
 
 import createApp from "../common/app.js";
@@ -26,6 +25,6 @@ const repository = new Repository(db);
 const service = new Service({ repository, consumer, producer });
 
 // Start the chain...
-await service.create({ name: "john order", orderId: uuid.v4() });
+await service.create({ name: "order-1" });
 
 createApp();
