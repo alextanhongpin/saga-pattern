@@ -30,7 +30,7 @@ This helps us understand the payload required for each step, as well as the chan
 | DeliveryService | cancelDelivery | `{"id": "1", "order_id": "1", "status": "cancelled"}` |
 | OrderService | approveOrder | `{"id": "1", "status": "approved"}` |
 
-## 4. Map the event for each steps, as well as the equivalent command
+### 4. Map the event for each steps, as well as the equivalent command
 
 Note that transaction steps may be successful or failed, and hence may publish either one success or failed event.
 
@@ -38,24 +38,24 @@ Compensation steps can only publish one event indicating that it is completed - 
 
 | Service | Step | Events Raised |
 | --      | --          | --            |
-| OrderService | createOrder | ORDER_CREATED/ORDER_REJECTED | 
-| OrderService | cancelOrder | ORDER_CANCELLED | 
+| OrderService | createOrder | ORDER_CREATED/ORDER_REJECTED |
+| OrderService | cancelOrder | ORDER_CANCELLED |
 | PaymentService | createPayment | PAYMENT_CREATED/PAYMENT_REJECTED |
 | PaymentService | refundPayment | PAYMENT_REFUNDED |
 | DeliveryService | createDelivery | DELIVERY_CREATED/DELIVERY_REJECTED |
 | DeliveryService | cancelDelivery | DELIVERY_CANCELLED |
 | OrderService | approveOrder | ORDER_APPROVED/ORDER_REJECTED |
 
-## 5. Map the events raised and commands listened by the service
+### 5. Map the events raised and commands listened by the service
 
 | Service | Subscribe to Commands | Publish Events |
 | --      | --          | --            |
-| OrderService | CREATE_ORDER, CANCEL_ORDER, APPROVE_ORDER | ORDER_CREATED, ORDER_REJECTED, ORDER_CANCELLED, ORDER_APPROVED | 
+| OrderService | CREATE_ORDER, CANCEL_ORDER, APPROVE_ORDER | ORDER_CREATED, ORDER_REJECTED, ORDER_CANCELLED, ORDER_APPROVED |
 | PaymentService | CREATE_PAYMENT, REFUND_PAYMENT | PAYMENT_CREATED, PAYMENT_REJECTED, PAYMENT_REFUNDED |
 | DeliveryService | CREATE_DELIVERY, CANCEL_DELIVERY | DELIVERY_CREATED, DELIVERY_REJECTED, DELIVERY_CANCELLED |
 
 
-## 6. Design the saga state machine
+### 6. Design the saga state machine
 
 Designing the saga is easy with the following rule:
 
@@ -65,3 +65,66 @@ Designing the saga is easy with the following rule:
 4. The service then triggers the action, which interacts with the entity (create, update), and persist the event in a local transaction with the Outbox Pattern
 5. The service then runs a background tasks that picks the event, and publishes to the saga reply channel
 6. Repeat steps 2-5 until it reaches the end
+
+## Saga Execution Coordinator Pseudo Code
+
+Here's a pseudo-code on how the Saga Execution Context might operate:
+```python
+# PSEUDOCODE, NOT ACTUAL PYTHON CODE
+
+# Consume events from.
+saga_queue = queue('saga_replay')
+
+# Publish commands to.
+payment_queue = queue('payment')
+order_queue = queue('order')
+delivery_queue = queue('delivery')
+
+saga_queue.consume(event_processor)
+
+# Receive events, maps to commands.
+def event_processor(event):
+    if event.type == 'ORDER_CREATED':
+				cmd = {'action': 'CREATE_PAYMENT', 'payload': {}}
+				payment_queue.publish(cmd)
+    elif event.type == 'PAYMENT_CREATED':
+				cmd = {'action': 'CREATE_DELIVERY', 'payload': {}}
+				delivery_queue.publish(cmd)
+    elif event.type == 'PAYMENT_CANCELLED':
+				cmd = {'action': 'CANCEL_PAYMENT', 'payload': {}}
+    # Continues...
+```
+
+And the service pseudo-code:
+
+```python
+# PSEUDOCODE, NOT ACTUAL PYTHON CODE
+
+# Publish events to:
+saga_queue = queue('saga_reply')
+
+# Listens to commands from saga orchestrator.
+payment_queue = queue('payment')
+payment_queue.subscribe(command_processor)
+
+# Payment Service
+class PaymentService():
+    def create_payment(payload):
+				# Outbox Pattern - persist both entity and event in a local transaction.
+				begin transaction
+				    create entity Payment
+						create event PaymentCreated
+				commit
+
+# Pool events from local
+def pool(event):
+    saga_queue.publish(event)
+		delete event from event table
+
+loop(pool, 10 * second)
+
+def command_processor(cmd):
+    if cmd.action == 'CREATE_PAYMENT':
+		    payment_service.create_payment(payload)
+    elif <other_commands>
+```
