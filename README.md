@@ -72,27 +72,30 @@ Here's a pseudo-code on how the Saga Execution Context might operate:
 ```python
 # PSEUDOCODE, NOT ACTUAL PYTHON CODE
 
-# Consume events from.
-saga_queue = queue('saga_replay')
+# Publishers. Publish commands.
+payment_q = queue('payment')
+order_q = queue('order')
+delivery_q = queue('delivery')
 
-# Publish commands to.
-payment_queue = queue('payment')
-order_queue = queue('order')
-delivery_queue = queue('delivery')
+# Subscribers. Subscribes to events.
+saga_q = queue('saga_reply') 
+saga_q.consume(event_processor)
 
-saga_queue.consume(event_processor)
+event_handlers = {
+    'ORDER_CREATED': create_payment_cmd,
+    'PAYMENT_CREATED': create_delivery_cmd,
+    'PAYMENT_CANCELLED': cancel_order_cmd
+}
 
-# Receive events, maps to commands.
+# Receive events, maps it to the correct handler and publishes commands.
 def event_processor(event):
-    if event.type == 'ORDER_CREATED':
-				cmd = {'action': 'CREATE_PAYMENT', 'payload': {}}
-				payment_queue.publish(cmd)
-    elif event.type == 'PAYMENT_CREATED':
-				cmd = {'action': 'CREATE_DELIVERY', 'payload': {}}
-				delivery_queue.publish(cmd)
-    elif event.type == 'PAYMENT_CANCELLED':
-				cmd = {'action': 'CANCEL_PAYMENT', 'payload': {}}
-    # Continues...
+     handler = event_handlers[event.type]
+     handler(event.payload)
+     ack event
+   
+def create_payment_cmd(event):
+    cmd = {'action': 'CREATE_PAYMENT', 'payload': {}}
+    payment_q.publish(cmd)
 ```
 
 And the service pseudo-code:
@@ -100,31 +103,48 @@ And the service pseudo-code:
 ```python
 # PSEUDOCODE, NOT ACTUAL PYTHON CODE
 
-# Publish events to:
-saga_queue = queue('saga_reply')
-
-# Listens to commands from saga orchestrator.
-payment_queue = queue('payment')
-payment_queue.subscribe(command_processor)
+# Consumer. Consumes commands.
+payment_q = queue('payment')
+payment_service = PaymentService(payment_q)
 
 # Payment Service
 class PaymentService():
-    def create_payment(payload):
-				# Outbox Pattern - persist both entity and event in a local transaction.
-				begin transaction
-				    create entity Payment
-						create event PaymentCreated
-				commit
+    def __init__(self, q):
+        self.command_handlers = {
+	  'CREATE_PAYMENT': self.create_payment,
+	  'CANCEL_PAYMENT': self.cancel_payment
+	}
+	
+	self.q = q
+	self.q.subscribe(self.command_processor)
 
-# Pool events from local
-def pool(event):
-    saga_queue.publish(event)
-		delete event from event table
+    def command_processor(self, cmd):
+    	handler = self.command_handlers[cmd.action]
+	handler(cmd.payload)
+	ack cmd # If the handler fails, without acknowledging the command from the message queue, we can retry it.
 
+    def create_payment(self, payload):
+        # Outbox Pattern - persist both entity and event in a local transaction.
+	begin transaction
+	    create entity Payment
+	    create event PaymentCreated
+	commit
+
+# Publisher. Publish events.
+saga_q = queue('saga_reply')
+
+# Runs a background task that continuously stream the events to the saga queue.
 loop(pool, 10 * second)
 
-def command_processor(cmd):
-    if cmd.action == 'CREATE_PAYMENT':
-		    payment_service.create_payment(payload)
-    elif <other_commands>
+def pool():
+    begin transaction
+    	select event
+    	saga_queue.publish(event)
+    	delete event
 ```
+
+The service lifecycle is as follow
+1. saga orchestrator publishes commands to the service queue
+2. the command processor executes the command
+3. each command runs a local transaction that also persist the event (Outbox Pattern)
+4. the service publish the events to the saga queue
