@@ -113,8 +113,8 @@ class TestSaga {
       // A unique id that is used in all steps, e.g. order id
       correlationId: 'xyz',
 
-      // A series of transaction, compensation ... must be even number.
-      // Allows backward compatibility, like inserting a steps in between etc for new saga, but old logic applies.
+      // A series of transaction, compensation ... allows us to map to application code methods.
+      // Allows backward compatibility, like inserting a steps in between etc for new saga.
       steps: ['step1', 'compensation1', 'step2', 'compensation2', 'done'],
 
       // Current step. Even means move forward, odd means move backwards.
@@ -129,81 +129,82 @@ class TestSaga {
   }
 
   // Recursive approach, alternative to handle.
-  do(saga) {
+  do(saga, payload) {
     if (saga.step < 0 || saga.step > saga.steps.length) {
       return saga
     }
+    // TODO: The payload will contain information of the current step.
+    // Validate against the current step, and skip it if it has been processed.
 
     const action = saga.steps[saga.step]
 
     // ODD.
     if (saga.step & 1) {
       // Compensation.
-      const result = this[action]?.(saga)
+      const result = this[action]?.(payload)
       saga.logs.push({
         action,
         result
       })
       saga.step -= 2
-      return this.do(saga)
+      return this.do(saga, result.data)
     } else {
       // Transaction
       try {
-        const result = this[action]?.(saga)
+        const result = this[action]?.(payload)
         saga.logs.push({
           action,
           result
         })
         saga.step += 2
+        return this.do(saga, result.data)
       } catch (error) {
         saga.logs.push({
           action,
           error
         })
         saga.step -= 1
+        return this.do(saga, payload)
       }
-      return this.do(saga)
     }
   }
-  step1(saga) {
+  step1(data) {
     return {
       event: 'STEP_1_DONE',
-      // Use the last log as payload...
-      data: saga.logs[saga.logs.length - 1].result
+      data
     }
   }
-  step2(saga) {
+  step2(data) {
     // throw new Error('step2Error')
     return {
       event: 'STEP_2_DONE',
-      data: saga.logs[saga.logs.length - 1].result?.data
+      data
     }
   }
-  done(saga) {
+  done(data) {
     return {
       event: 'DONE',
-      data: saga.logs[saga.logs.length - 1].result?.data
+      data
     }
   }
-  compensation1(saga) {
+  compensation1(data) {
     return {
       event: 'COMPENSATED_1',
-      // Use the second last log as payload, as the previous one is failure.
-      data: saga.logs[saga.logs.length - 2].result?.data
+      data
     }
   }
-  compensation2(saga) {
+  compensation2(data) {
     return {
       event: 'COMPENSATED_2',
-      data: saga.logs[saga.logs.length - 1].result
+      data
     }
   }
 }
 
-function sagaProcessor(saga) {
+function sagaProcessor(saga, payload) {
   switch (saga.name) {
     case TestSaga.name:
-      return new TestSaga().do(saga)
+      return new TestSaga().do(saga, payload)
     default:
       throw new Error('not implemented')
   }
@@ -213,10 +214,15 @@ function checkComplete(saga) {
   return saga.step === -1 || saga.step === saga.steps.length
 }
 
-const saga = TestSaga.new({
+const payload = {
   foo: 'bar'
-})
-const outputSaga = sagaProcessor(saga)
+}
+const saga = TestSaga.new(payload)
+const outputSaga = sagaProcessor(saga, payload)
 console.log(outputSaga)
 console.log(checkComplete(outputSaga))
 ```
+
+There are a few assumptions for the data structure above:
+- the sequence of transactions/compensation is ordered
+- each step uses the payload of the previous action. If an error occured, it uses the payload for that step.
