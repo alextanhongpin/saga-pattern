@@ -45,3 +45,51 @@ saga('fail 2', [
   tx('tx2', true), tx('c2')
 ])
 ```
+
+## Through Recursion
+
+```js
+
+// Transaction: transaction a -> transaction b -> transaction c
+// Compensation: compensate a <- compensate b 
+
+function saga(state={}, action='transaction_a') {
+  if (!state.logs) state.logs = []
+  state.logs.push(action)
+  
+  switch (action) {
+    // Events.
+    case 'transaction_a':
+      return saga(state, 'transacted_a')
+    case 'transaction_b':
+      return saga(state, state.bFailed ? 'compensate_a' : 'transacted_b')
+    case 'transaction_c':
+      return saga(state, state.cFailed ? 'compensate_b' : 'end_saga')
+    case 'transacted_a':
+      return saga(state, 'transaction_b')
+    case 'transacted_b':
+      return saga(state, 'transaction_c')
+    case 'compensate_a':
+      return saga(state, 'end_saga')
+    case 'compensate_b':
+      return saga(state, 'compensated_b')
+    case 'compensated_b':
+      return saga(state, 'compensate_a')
+    case 'compensated_a':
+      return saga(state, 'end_saga')
+    case 'end_saga':
+      return state
+    default:
+      throw new Error('not implemented: ' + action)
+  }
+}
+
+
+const state = {
+  logs: [],
+  bFailed: false,
+  cFailed: true
+}
+saga(state)
+console.log(state)
+```
