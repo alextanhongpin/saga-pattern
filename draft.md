@@ -205,3 +205,82 @@ rollback:
 	fmt.Println("done")
 }
 ```
+
+## Scenario
+
+sagas
+- id
+- status: one of pending, started, succeeded, compensating, compensated
+- version: numerical version, to indicate the type, e.g. 1
+- type: the type, e.g. order_saga
+- current_step: the current step of the saga, e.g. book_flight, end is a special step used to indicate completion
+- step_definitions: a json array of [{name, next, undo, rank}]
+- last_run_at: the time it was last run
+- created_at
+
+saga_step
+- id
+- saga_id
+- status: one of pending, started, succeeded, failed
+- name: name of step, e.g. book_flight
+- request_params: the request params in jsonb
+- response_params: the response params in jsonb
+- last_run_at: the date it last run, can be used to check threshold
+- retry_count: the number of retries
+- retry_threshold: the max number of retries, 0 means no retry allowed
+
+
+
+User book flight
+1. User submit flight details (3 flights, and 2 hotels)
+2. System create flight entry
+3. System create flight_saga
+	- status: pending
+	- version: 1
+	- type: flight_saga
+	- current_step: null
+	- step_definitions: 
+[
+	{name: "book_flight_1", next: "book_flight_2", undo: "cancel_flight_1", rank: 1},
+	{name: "book_flight_2", next: "book_flight_3", undo: "cancel_flight_2", rank: 2},
+	{name: "book_flight_3", next: "done", undo: "cancel_flight_3", rank: 3},
+	{name: "cancel_flight_3", next: "cancel_flight_2", undo: null, rank: 4},
+	{name: "cancel_flight_2", next: "cancel_flight_1", undo: null, rank: 5},
+	{name: "cancel_flight_1", next: "done", undo: null, rank: 6},
+]
+
+
+Scenario: Scheduler process saga
+1. Scheduler finds saga that has status pending
+2. Scheduler locks row and set status to started, and last_run_at to now
+3. Scheduler process workflow
+	3a) System crash: Supervisor restarts Scheduler
+	3b) Workflow failed: Scheduler set status to compensating and current_step to compensation step
+
+Scenario: Scheduler process workflow
+Scheduler will only process those that are pending. It does not care about failed ones. It is supervisor job to reset the status back to pending from failed.
+1. Scheduler upserts saga_step with saga_id, status=pending, name.
+	1a) Saga step exists: Skip insert
+2. Scheduler locks pending row
+	2a) Row is locked: Skip.
+	2b) Status is not pending. Skip. Supervisor will update the status.
+3. Scheduler update status to started and last_run_at to now and request_params with the current request params.
+4. Scheduler execute Agent
+	4a) Execution fails: Status will be failed and response_params stored
+	4b) Execution successful: Status will be succeeded and response_params stored
+	4c) System crash before status is updated: Status will be started
+6. Scheduler updates saga current_step to next step
+7. Scheduler repeats process workflow
+	7a) next step is done: Saga ends
+	
+	
+	
+Scenario: Supervisor looks for pending
+1. Supervisor looks for pending and last_run_at greater than allowed threshold
+2. Supervisor queries the source for current status
+	2a) There are no source to query: Supervisor continue to next step
+3. Supervisor resets the status back to pending, update the retry_count by 1
+
+Scenario: Supervisor looks for failed steps
+1. Supervisor checks the status to check if retryable
+2. Supervisor resets the status back to pending, update the retry_count by 1
