@@ -184,6 +184,7 @@ func main() {
 			op = "foo_rollback"
 			goto rollback
 		}
+		op = "bar"
 
 		fallthrough
 	case "bar":
@@ -197,6 +198,7 @@ rollback:
 	switch op {
 	case "bar_rollback":
 		fmt.Println("rollback bar")
+		op = "foo_rollback"
 		fallthrough
 	case "foo_rollback":
 		fmt.Println("rollback foo")
@@ -215,19 +217,20 @@ sagas
 - type: the type, e.g. order_saga
 - current_step: the current step of the saga, e.g. book_flight, end is a special step used to indicate completion
 - step_definitions: a json array of [{name, next, undo, rank}]
-- last_run_at: the time it was last run
+- locked_at: the time it was last locked
 - created_at
+- updated_at
 
 saga_step
 - id
 - saga_id
-- status: one of pending, started, succeeded, failed
+- status: one of pending, started (we can remove this and indicate it has started once locked at is not null), succeeded, failed
 - name: name of step, e.g. book_flight
 - request_params: the request params in jsonb
 - response_params: the response params in jsonb
-- last_run_at: the date it last run, can be used to check threshold
+- locked_at: the date it last run, can be used to check threshold
 - retry_count: the number of retries
-- retry_threshold: the max number of retries, 0 means no retry allowed
+- retry_threshold: the max number of retries, 0 means no retry allowed. if the method is compensating, it should never fail.
 
 
 
@@ -252,7 +255,7 @@ User book flight
 
 Scenario: Scheduler process saga
 1. Scheduler finds saga that has status pending
-2. Scheduler locks row and set status to started, and last_run_at to now
+2. Scheduler locks row and set locked_at to now
 3. Scheduler process workflow
 	3a) System crash: Supervisor restarts Scheduler
 	3b) Workflow failed: Scheduler set status to compensating and current_step to compensation step
@@ -264,12 +267,13 @@ Scheduler will only process those that are pending. It does not care about faile
 2. Scheduler locks pending row
 	2a) Row is locked: Skip.
 	2b) Status is not pending. Skip. Supervisor will update the status.
-3. Scheduler update status to started and last_run_at to now and request_params with the current request params.
-4. Scheduler execute Agent
-	4a) Execution fails: Status will be failed and response_params stored
+3. Scheduler set locked_at to now and request_params with the current request params.
+        3a) locked and not yet release: raise error running
+5. Scheduler execute Agent
+	4a) Execution fails (irrecoverable): Status will be failed and response_params stored
 	4b) Execution successful: Status will be succeeded and response_params stored
-	4c) System crash before status is updated: Status will be started
-6. Scheduler updates saga current_step to next step
+	4c) System crash before status is updated: Status will be pending
+6. Scheduler update current step to the next and proceed to next step
 7. Scheduler repeats process workflow
 	7a) next step is done: Saga ends
 	
@@ -281,6 +285,6 @@ Scenario: Supervisor looks for pending
 	2a) There are no source to query: Supervisor continue to next step
 3. Supervisor resets the status back to pending, update the retry_count by 1
 
-Scenario: Supervisor looks for failed steps
+Scenario: Supervisor looks for failed steps (this does not exist)
 1. Supervisor checks the status to check if retryable
 2. Supervisor resets the status back to pending, update the retry_count by 1
