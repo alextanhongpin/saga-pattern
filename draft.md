@@ -264,11 +264,12 @@ Scenario: Scheduler process workflow
 Scheduler will only process those that are pending. It does not care about failed ones. It is supervisor job to reset the status back to pending from failed.
 1. Scheduler upserts saga_step with saga_id, status=pending, name.
 	1a) Saga step exists: Skip insert
-2. Scheduler locks pending row
+2. Scheduler begins a Unit of Work and locks pending row
 	2a) Row is locked: Skip.
 	2b) Status is not pending. Skip. Supervisor will update the status.
 3. Scheduler set locked_at to now and request_params with the current request params.
         3a) locked and not yet release: raise error running
+4. Scheduler commits Unit of Work.
 5. Scheduler execute Agent
 	4a) Execution fails (irrecoverable): Status will be failed and response_params stored
 	4b) Execution successful: Status will be succeeded and response_params stored
@@ -279,8 +280,8 @@ Scheduler will only process those that are pending. It does not care about faile
 	
 	
 	
-Scenario: Supervisor looks for pending
-1. Supervisor looks for pending and last_run_at greater than allowed threshold
+Scenario: Supervisor looks for pending saga_steps
+1. Supervisor looks for pending and locked_at greater than allowed threshold
 2. Supervisor queries the source for current status
 	2a) There are no source to query: Supervisor continue to next step
 3. Supervisor resets the status back to pending, update the retry_count by 1
