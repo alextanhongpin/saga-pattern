@@ -1,5 +1,12 @@
 # Implementation attempt
 
+What are the end goals?
+- run to completion (no failure)
+- lifecycle observability (created, started, completed, compensated, cancelled or failed)
+- explict cancellation - request can be aborted by the user, or they can done by admin
+- full compensation. Compensation steps should be handled gracefully.
+- language-agnostic - I should be able to implement this in golang or nodejs, regardless of technology stack (minimum using database to store the state)
+
 The database design should have at least two tables
 
 `sagas`
