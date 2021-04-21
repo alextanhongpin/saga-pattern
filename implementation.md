@@ -87,17 +87,14 @@ func (s *Scheduler) Exec(ctx context.Context, step Step) error {
 		return err
 	}
 	status, nextStep := s.On(ctx, step)
+	// On failure, increment the error count, and fail them when it reaches a threshold. This avoid too many retries.
+	if err := s.SaveStep(ctx, step, status); err != nil {
+		return err
+	}
 	switch status {
 	case Success, Failed:
-		// On failure, increment the error count, and fail them when it reaches a threshold. This avoid too many retries.
-		if err := s.SaveStep(ctx, step, Failed); err != nil {
-			return err
-		}
 		return s.Exec(ctx, nextStep)
 	case Completed:
-		if err := s.SaveStep(ctx, step, Completed); err != nil {
-			return err
-		}
 		return s.Save(ctx, Completed)
 	}
 }
