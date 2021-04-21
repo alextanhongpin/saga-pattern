@@ -48,79 +48,101 @@ For each event we receive, if it is successful event, it ends the previous step,
 ```go
 package main
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
-type Saga struct {
+func main() {
+	fmt.Println("Hello, playground")
 }
 
-func (s *Saga) SaveStep(ctx context.Context, step Step, status Status) {
+type Agent struct{}
+
+func (a Agent) Handle(ctx context.Context) error {
+	return nil
 }
 
-func (s *Saga) Execute(ctx context.Context, id uuid.UUID, name string, event Event) {
-	// find saga state
-	state := s.upsertSaga(ctx, id, name)
-	if state.Completed {
-		return errors.New("completed")
+type Scheduler struct{}
+
+// Each step is a command, e.g. 
+// 1. create order
+// 2. create payment
+// 3. create delivery
+
+// Each step has an input event, and output event that drives it to the next step.
+// E.g. order placed -> create order -> order created
+// order created -> create payment -> payment made
+// payment failed -> reverse order -> order reversed
+// 
+// Aside from compensating failed transactions, we also need to consider the scenario
+// where the cancellation is requested explicitly - user request refund for a successfully placed order etc.
+func (s *Scheduler) Handle(ctx context.Context, evt Event) error {
+	step := s.mapEventToStep(evt) // Each step is literally a command.
+	return s.Exec(ctx, step)
+}
+
+func (s *Scheduler) Exec(ctx context.Context, step Step) error {
+	if err := s.SaveStep(ctx, step, Pending); err != nil {
+		return err
 	}
-	 // OrderCreated -> DoA,  A Failed, B Undone -> UndoA
-	// A Done -> Do B, B Failed -> Undo B
-	// B Done -> Completed
-	command := s.processEvent(event) 
-	step := state.GetOrInsertStep(command)
+	status, nextStep := s.On(ctx, step)
+	switch status {
+	case Success:
+		if err := s.SaveStep(ctx, step, Success); err != nil {
+			return err
+		}
+		return s.Exec(ctx, nextStep)
+	case Failed:
+		// On failure, increment the error count, and fail them when it reaches a threshold. This avoid too many retries.
+		if err := s.SaveStep(ctx, step, Failed); err != nil {
+			return err
+		}
+		return s.Exec(ctx, nextStep)
+	case Completed:
+		if err := s.SaveStep(ctx, step, Completed); err != nil {
+			return err
+		}
+		return s.Save(ctx, Completed)
+	}
+}
 
-	switch step.Status {
+func (s *Scheduler) On(ctx context.Context, step Step) (Status, Step) {
+	switch step {
 	case DoA:
-		s.SaveStep(ctx, DoA, Pending)
-
-		event, err := doA()
+		res, err := doA()
 		if err != nil {
-			// NOTE: If this is async, sending to message queue, the fail here could mean infra failure, not domain failure.
-			s.SaveStep(ctx, DoA, Failed)
-			state.Status = UndoA
-			goto rollback
+			return Failed, UndoA
 		}
-    command = processEvent(event)
-		s.SaveStep(ctx, DoA, Completed)
-		s.Status = DoB
-		fallthrough
+		return Success, DoB
 	case DoB:
-		s.SaveStep(ctx, DoB, Pending)
-		_, err := doB()
+		res, err := doB()
 		if err != nil {
-			s.SaveStep(ctx, DoB, Failed)
-			state.Status = UndoB
-			goto rollback
+			return Failed, UndoB
 		}
-		s.SaveStep(ctx, DoB, Completed)
-		s.Save(ctx, Completed)
-		return
-	}
-
-rollback:
-	switch state.Status {
+		return Completed, NoOp
 	case UndoB:
-		s.SaveStep(ctx, UndoB, Pending)
-
-		_, err := undoB()
+		res, err := undoB()
 		if err != nil {
-			// NOTE: If this is async, sending to message queue, the fail here could mean infra failure, not domain failure.
-			s.SaveStep(ctx, UndoB, Failed)
-			return
+			return Failed, UndoB
 		}
-		s.SaveStep(ctx, UndoB, Completed)
-		fallthrough
+		return Success, UndoA
 	case UndoA:
-		s.SaveStep(ctx, UndoA, Pending)
-
-		_, err := undoA()
+		res, err := undoA()
 		if err != nil {
-			// NOTE: If this is async, sending to message queue, the fail here could mean infra failure, not domain failure.
-			s.SaveStep(ctx, UndoA, Failed)
-			return
+			return Failed, UndoA
 		}
-		s.SaveStep(ctx, UndoA, Completed)
-		s.Save(ctx, Completed)
-		return
+		return Completed, NoOp
+	case NoOp:
+		return Completed, NoOp
 	}
+}
+
+func (s *Scheduler) Save(ctx context.Context, status Status) error {
+	return nil
+}
+
+func (s *Scheduler) SaveStep(ctx context.Context, step Step, status Status) error {
+	return nil
 }
 ```
