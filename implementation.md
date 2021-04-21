@@ -50,6 +50,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -65,7 +66,7 @@ func (a Agent) Handle(ctx context.Context) error {
 
 type Scheduler struct{}
 
-// Each step is a command, e.g. 
+// Each step is a command, e.g.
 // 1. create order
 // 2. create payment
 // 3. create delivery
@@ -74,28 +75,32 @@ type Scheduler struct{}
 // E.g. order placed -> create order -> order created
 // order created -> create payment -> payment made
 // payment failed -> reverse order -> order reversed
-// 
+//
 // Aside from compensating failed transactions, we also need to consider the scenario
 // where the cancellation is requested explicitly - user request refund for a successfully placed order etc.
 func (s *Scheduler) Handle(ctx context.Context, evt Event) error {
-	step := s.mapEventToStep(evt) // Each step is literally a command.
-	return s.Exec(ctx, step)
+	saga := s.loadSaga(evt) // Internally maps events to commands, and store the initial saga state.
+	return s.Exec(ctx, saga)
 }
 
-func (s *Scheduler) Exec(ctx context.Context, step Step) error {
-	if err := s.SaveStep(ctx, step, Pending); err != nil {
+func (s *Scheduler) Exec(ctx context.Context, saga Saga) error {
+	if saga.Status == Completed {
+		return errors.New("completed")
+	}
+	step := saga.CurrentStep
+	if err := s.SaveStep(ctx, saga, step, Pending); err != nil {
 		return err
 	}
 	status, nextStep := s.On(ctx, step)
 	// On failure, increment the error count, and fail them when it reaches a threshold. This avoid too many retries.
-	if err := s.SaveStep(ctx, step, status); err != nil {
+	if err := s.SaveStep(ctx, saga, step, status); err != nil {
 		return err
 	}
 	switch status {
 	case Success, Failed:
-		return s.Exec(ctx, nextStep)
+		return s.Exec(ctx, saga)
 	case Completed:
-		return s.Save(ctx, Completed)
+		return s.Save(ctx, saga, Completed)
 	}
 }
 
@@ -130,11 +135,12 @@ func (s *Scheduler) On(ctx context.Context, step Step) (Status, Step) {
 	}
 }
 
-func (s *Scheduler) Save(ctx context.Context, status Status) error {
+func (s *Scheduler) Save(ctx context.Context, saga Saga, status Status) error {
+	// The saga state is stored in the context (?) as correlation-id.
 	return nil
 }
 
-func (s *Scheduler) SaveStep(ctx context.Context, step Step, status Status) error {
+func (s *Scheduler) SaveStep(ctx context.Context, saga Saga, step Step, status Status) error {
 	return nil
 }
 ```
