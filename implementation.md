@@ -144,3 +144,54 @@ func (s *Scheduler) SaveStep(ctx context.Context, saga Saga, step Step, status S
 	return nil
 }
 ```
+
+Alternative design:
+
+```go
+package main
+
+type Saga struct {}
+
+// Saga should be created with all the necessary payload that is required to run all the steps to completion.
+// This allows us to load the payload and retry the steps programmatically when one of them fails.
+saga := NewSaga(id, name) 
+
+// There are two ways to invoke each step, manually or through events.
+// When a new events is received, we map the events into commands which will run each steps.
+saga.CreateOrder()
+saga.CreatePayment()
+saga.CreateDelivery()
+
+saga.CancelDelivery()
+saga.CancelPayment()
+saga.CancelOrder()
+
+
+func (s *Saga) On(event Event) error {
+	command := s.MapEventToCommand(event)
+	switch command.Step() {
+		case StepOrderCreate:
+			return s.CreateOrder()
+	}
+}
+
+func (s *Saga) CreateOrder() error {
+	return s.Do(StepCreateOrder, func() error {
+		// Fire
+		return ErrRollback
+	})
+}
+
+func (s *Saga) Do(step Step, fn func() error) error {
+	if err := s.SaveStep(step, Pending); err != nil {
+		return err
+	}
+	if err := fn(); err != nil {
+		if errors.is(ErrRollback, err) {
+			return s.SaveStep(step, Failed)
+		}
+		return err
+	}
+	return s.SaveStep(step, Completed)
+}
+```
