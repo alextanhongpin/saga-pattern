@@ -195,3 +195,196 @@ func (s *Saga) Do(step Step, fn func() error) error {
 	return s.SaveStep(step, Completed)
 }
 ```
+
+## Another implementation
+
+- saga orchestrates the steps required to complete the workflow
+- each step consist of a transaction and it's compensation
+- compensation can only be executed if the transaction was successful
+- each step can be either asynchronous or synchronous
+- synchronous steps completes immediately
+- asyncronous steps can be long-running, and can be updated through callback/event listener
+- when one of the steps fails and is not retryable (validation error, as compared to network/server crash), the all the previous completed steps will be rollback
+- each steps should be side-effect free - attempting to run them multiple times should not trigger unexpected behaviour (in reality, this might not be true, and that is why we need to ensure they will not be triggered multiple times)
+- saga is completed when all transaction steps run to completion, or when there is a failure in one step, and all the completed ones have been rollbacked
+```go
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+)
+
+var ErrRollback = errors.New("rollback")
+
+func RollbackError(msg string) error {
+	return fmt.Errorf("%w: %s", ErrRollback, msg)
+}
+
+type Status string
+
+var (
+	Pending   Status = "pending"
+	Completed Status = "completed"
+	Failed    Status = "failed"
+)
+
+type createOrderStep struct{}
+
+func (c *createOrderStep) Do() Action {
+	return &createOrder{}
+}
+
+func (c *createOrderStep) Undo() Action {
+	return &cancelOrder{}
+}
+
+type createOrder struct{}
+
+func (c createOrder) Name() string  { return "create-order" }
+func (c createOrder) IsAsync() bool { return false }
+func (c createOrder) Do(ctx context.Context) error {
+	fmt.Println("creating order")
+	return nil
+}
+
+type cancelOrder struct{}
+
+func (c cancelOrder) Name() string  { return "cancel-order" }
+func (c cancelOrder) IsAsync() bool { return false }
+func (c cancelOrder) Do(ctx context.Context) error {
+	fmt.Println("cancelling order")
+	return nil
+}
+
+type createPaymentStep struct{}
+
+func (c *createPaymentStep) Do() Action {
+	return &createPayment{}
+}
+
+func (c *createPaymentStep) Undo() Action {
+	return &refundPayment{}
+}
+
+type createPayment struct{}
+
+func (c createPayment) Name() string  { return "create-payment" }
+func (c createPayment) IsAsync() bool { return false }
+func (c createPayment) Do(ctx context.Context) error {
+	return RollbackError("invalid payment method")
+}
+
+type refundPayment struct{}
+
+func (c refundPayment) Name() string  { return "refund-payment" }
+func (c refundPayment) IsAsync() bool { return false }
+func (c refundPayment) Do(ctx context.Context) error {
+	fmt.Println("refunding payment")
+	return nil
+}
+
+func main() {
+	s := Saga{
+		steps:  []Step{&createOrderStep{}, &createPaymentStep{}},
+		status: make(map[string]Status),
+	}
+	if err := s.Do(context.Background()); err != nil {
+		log.Fatal(err)
+	}
+	if err := s.Do(context.Background()); err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("%+v", s)
+
+}
+
+type Saga struct {
+	steps  []Step
+	status map[string]Status
+}
+
+func (s *Saga) On(ctx context.Context, event string) error {
+	// Handle event, e.g. update status completed/failed for that step.
+	// Run the step to completion.
+	return s.Do(ctx)
+}
+
+func (s *Saga) Do(ctx context.Context) error {
+	var hasFailure bool
+	for _, step := range s.steps {
+		doFn := step.Do()
+		status := s.status[doFn.Name()]
+		if status == Completed {
+			continue
+		}
+		if status == Failed {
+			hasFailure = true
+			break
+		}
+		if err := s.do(ctx, doFn); err != nil {
+			return err
+		}
+		if doFn.IsAsync() {
+			return nil
+		}
+	}
+
+	if !hasFailure {
+		return nil
+	}
+
+	for _, step := range s.steps {
+		status := s.status[step.Do().Name()]
+		if status != Completed {
+			continue
+		}
+		undoFn := step.Undo()
+		status = s.status[undoFn.Name()]
+		if status == Completed {
+			continue
+		}
+		if err := s.do(ctx, undoFn); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Async step has no success status. The completion is only indicated in the event handler.
+// However, failures could still be handled here.
+func (s *Saga) do(ctx context.Context, act Action) error {
+	if err := s.SaveStep(ctx, act.Name(), Pending); err != nil {
+		return err
+	}
+
+	if err := act.Do(ctx); err != nil {
+		if errors.Is(err, ErrRollback) {
+			return s.SaveStep(ctx, act.Name(), Failed)
+		}
+		return err
+	}
+	if act.IsAsync() {
+		return nil
+	}
+	return s.SaveStep(ctx, act.Name(), Completed)
+}
+
+func (s *Saga) SaveStep(ctx context.Context, name string, status Status) error {
+	s.status[name] = status
+	return nil
+}
+
+type Action interface {
+	Name() string
+	IsAsync() bool
+	Do(ctx context.Context) error
+}
+
+type Step interface {
+	Do() Action
+	Undo() Action
+}
+```
