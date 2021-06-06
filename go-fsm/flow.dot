@@ -1,0 +1,39 @@
+digraph G {
+    // title
+    labelloc="t";
+    label="My Diagram";
+
+	node[shape=box]
+	tx1 [label="create booking"]
+	tx2 [label="create payment"]
+	tx3 [label="confirm booking"]
+
+	cx1 [label="cancel booking", style=filled, color=mistyrose]
+	cx2 [label="refund payment", style=filled, color=mistyrose]
+	cx3 [label="reject booking", style=filled, color=mistyrose]
+
+
+	start -> tx1 [label="started"]
+	tx1 -> tx2 [label="booking created"]
+	tx2 -> tx3 [label="payment created"]
+	tx3 -> end [label="booking confirmed"]
+
+        // Reverse the dir so that it displays nicely.
+	start -> cx1 [label="booking cancelled", dir=back, color=red, fontcolor=red]
+	cx1 -> cx2 [label="payment refunded", dir=back, color=red, fontcolor=red]
+	cx2 -> cx3 [label="booking rejected", dir=back, color=red, fontcolor=red]
+	cx3 -> end [label="reversed", dir=back, color=red, fontcolor=red]
+
+	tx2 -> cx1 [label="payment failed", color=red, fontcolor=red]
+	tx3 -> cx2 [label="booking failed", color=red, fontcolor=red]
+
+	{
+		rank = same;
+		start; tx1; tx2; tx3;
+	}
+
+	{
+		rank = same;
+		cx1; cx2; cx3; end;
+	}
+}

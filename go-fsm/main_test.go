@@ -12,41 +12,41 @@ func TestOrchestratorFlow(t *testing.T) {
 
 	var createPayment, confirmBooking, refundPayment, cancelBooking, sagaEnd bool
 	eventHandlers := fsm.Callbacks{
-		"booking_created": func(e *fsm.Event) {
+		"create-payment": func(e *fsm.Event) {
 			t.Logf("%s<%s,%s>\n", e.Event, e.Src, e.Dst)
 			createPayment = true
 		},
-		"payment_created": func(e *fsm.Event) {
+		"confirm-booking": func(e *fsm.Event) {
 			t.Logf("%s<%s,%s>\n", e.Event, e.Src, e.Dst)
 			confirmBooking = true
 		},
-		"booking_confirmed": func(e *fsm.Event) {
+		"end": func(e *fsm.Event) {
 			t.Logf("%s<%s,%s>\n", e.Event, e.Src, e.Dst)
 			sagaEnd = true
 		},
-		"booking_rejected": func(e *fsm.Event) {
+		"refund-payment": func(e *fsm.Event) {
 			t.Logf("%s<%s,%s>\n", e.Event, e.Src, e.Dst)
 			refundPayment = true
 		},
-		"payment_refunded": func(e *fsm.Event) {
+		"cancel-booking": func(e *fsm.Event) {
 			t.Logf("%s<%s,%s>\n", e.Event, e.Src, e.Dst)
 			cancelBooking = true
 		},
-		"booking_cancelled": func(e *fsm.Event) {
+		"compensated": func(e *fsm.Event) {
 			t.Logf("%s<%s,%s>\n", e.Event, e.Src, e.Dst)
 			sagaEnd = true
 		},
 	}
-	o := NewBookingSaga("1", eventHandlers)
+	saga := NewBookingSaga("1", eventHandlers)
 
 	// When the booking is created.
-	err := o.On("booking_created")
+	err := saga.On("booking_created")
 
 	assert := assert.New(t)
 	assert.Nil(err)
 
 	// Then the step is completed.
-	step, err := o.GetStep("create-booking")
+	step, err := saga.GetStep("create-booking")
 	assert.Nil(err)
 	assert.Equal(StepStatusSuccess, step.Status)
 
@@ -54,11 +54,11 @@ func TestOrchestratorFlow(t *testing.T) {
 	assert.True(createPayment)
 
 	// When the payment is created.
-	err = o.On("payment_created")
+	err = saga.On("payment_created")
 	assert.Nil(err)
 
 	// Then the step is completed.
-	step, err = o.GetStep("create-payment")
+	step, err = saga.GetStep("create-payment")
 	assert.Nil(err)
 	assert.Equal(StepStatusSuccess, step.Status)
 
@@ -66,11 +66,11 @@ func TestOrchestratorFlow(t *testing.T) {
 	assert.True(confirmBooking)
 
 	// When the booking is confirmed.
-	err = o.On("booking_confirmed")
+	err = saga.On("booking_confirmed")
 	assert.Nil(err)
 
 	// Then the step is completed.
-	step, err = o.GetStep("confirm-booking")
+	step, err = saga.GetStep("confirm-booking")
 	assert.Nil(err)
 	assert.Equal(StepStatusSuccess, step.Status)
 
@@ -78,14 +78,16 @@ func TestOrchestratorFlow(t *testing.T) {
 	assert.True(sagaEnd)
 
 	// And the saga is done.
-	assert.Equal(SagaStatusDone, o.Status())
+	assert.Equal(SagaStatusDone, saga.Status())
+
+	assert.Nil(saga.On("reversed"))
 
 	// When booking rejected.
-	err = o.On("booking_rejected")
+	err = saga.On("booking_rejected")
 	assert.Nil(err)
 
 	// The the step is marked as failed.
-	step, err = o.GetStep("confirm-booking")
+	step, err = saga.GetStep("confirm-booking")
 	assert.Nil(err)
 	assert.Equal(StepStatusFailed, step.Status)
 
@@ -93,14 +95,14 @@ func TestOrchestratorFlow(t *testing.T) {
 	assert.True(refundPayment)
 
 	// And the saga is compensating.
-	assert.Equal(SagaStatusCompensating, o.Status())
+	assert.Equal(SagaStatusCompensating, saga.Status())
 
 	// When payment refunded.
-	err = o.On("payment_refunded")
+	err = saga.On("payment_refunded")
 	assert.Nil(err)
 
 	// The the step is marked as compensated.
-	step, err = o.GetStep("create-payment")
+	step, err = saga.GetStep("create-payment")
 	assert.Nil(err)
 	assert.Equal(StepStatusCompensated, step.Status)
 
@@ -108,14 +110,14 @@ func TestOrchestratorFlow(t *testing.T) {
 	assert.True(cancelBooking)
 
 	// And the saga is compensating.
-	assert.Equal(SagaStatusCompensating, o.Status())
+	assert.Equal(SagaStatusCompensating, saga.Status())
 
 	// When booking cancelled.
-	err = o.On("booking_cancelled")
+	err = saga.On("booking_cancelled")
 	assert.Nil(err)
 
 	// The the step is marked as compensated.
-	step, err = o.GetStep("create-booking")
+	step, err = saga.GetStep("create-booking")
 	assert.Nil(err)
 	assert.Equal(StepStatusCompensated, step.Status)
 
@@ -123,5 +125,5 @@ func TestOrchestratorFlow(t *testing.T) {
 	assert.True(sagaEnd)
 
 	// And the saga is done.
-	assert.Equal(SagaStatusDone, o.Status())
+	assert.Equal(SagaStatusDone, saga.Status())
 }
