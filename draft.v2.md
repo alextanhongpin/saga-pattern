@@ -419,3 +419,246 @@ func (s *Saga) Emit(ctx context.Context, event Event, payload any) error {
 }
 ```
 		
+V3
+
+```go
+// You can edit this code!
+// Click here and start typing.
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+)
+
+func main() {
+	saga := NewSaga()
+	saga.AddStep(Step{
+		Name:     "CreateBooking",
+		Rollback: false,
+		When:     []Event{"INIT"},
+		Then:     "BOOKING_CREATED",
+		Else:     "BOOKING_FAILED",
+	})
+	saga.AddStep(Step{
+		Name:     "CompleteSaga",
+		Rollback: false,
+		When:     []Event{"BOOKING_CREATED"},
+	})
+	saga.AddStep(Step{
+		Name:     "AbortSaga",
+		Rollback: false,
+		When:     []Event{"BOOKING_FAILED"},
+	})
+	fmt.Println(saga.Status())
+	saga.Emit("INIT")
+	saga.Emit("BOOKING_FAILED")
+	fmt.Println(saga.Status())
+	pretty(saga)
+}
+
+func pretty(data any) []byte {
+	b, err := json.MarshalIndent(data, "", " ")
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(string(b))
+	return b
+}
+
+type Status string
+
+var (
+	StatusPending Status = "pending"
+	StatusSuccess Status = "success"
+	StatusFailed  Status = "failed"
+)
+
+func (s Status) IsPending() bool {
+	return s == StatusPending
+}
+func (s Status) IsSuccess() bool {
+	return s == StatusSuccess
+}
+func (s Status) IsFailed() bool {
+	return s == StatusFailed
+}
+
+func (s Status) CanTransition(next Status) bool {
+	switch s {
+	case StatusPending:
+		return next.IsSuccess() || next.IsFailed()
+	case StatusSuccess, StatusFailed:
+		return false
+	default:
+		return false
+	}
+}
+
+func (s Status) To(next Status) (Status, bool) {
+	if s.CanTransition(next) {
+		return next, true
+	}
+	return s, false
+}
+
+type Event string
+
+type Step struct {
+	Name     string  `json:"name"`
+	Rollback bool    `json:"rollback"`
+	When     []Event `json:"when"`
+	Then     Event   `json:"then"`
+	Else     Event   `json:"else"`
+}
+
+func (s Step) IsNoop() bool {
+	return s.Then == "" && s.Else == ""
+}
+
+type StepStatus struct {
+	Step
+	Status Status
+}
+
+type Log struct {
+	Name      string    `json:"name"`
+	Status    Status    `json:"status"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type Saga struct {
+	Steps []Step `json:"steps"`
+	Logs  []Log  `json:"logs"`
+	state map[string]StepStatus
+}
+
+func NewSaga() *Saga {
+	return &Saga{
+		state: make(map[string]StepStatus),
+	}
+}
+
+func (s *Saga) AddStep(step Step) {
+	_, ok := s.state[step.Name]
+	if ok {
+		panic("step exists")
+	}
+
+	s.state[step.Name] = StepStatus{
+		Step:   step,
+		Status: StatusPending,
+	}
+	s.Steps = append(s.Steps, step)
+}
+
+func (s *Saga) Status() string {
+	var txCount int
+	var txSuccessCount, cxSuccessCount int
+	var rollback bool
+	for _, step := range s.Steps {
+		if step.IsNoop() {
+			continue
+		}
+		state, ok := s.state[step.Name]
+		if !ok {
+			panic("step not found")
+		}
+		if !step.Rollback {
+			txCount++
+		}
+
+		if state.Status.IsSuccess() {
+			if state.Step.Rollback {
+				cxSuccessCount++
+				if !rollback {
+					rollback = true
+				}
+			} else {
+				txSuccessCount++
+			}
+		}
+		if state.Status.IsFailed() {
+			if !rollback {
+				rollback = true
+			}
+		}
+	}
+	if rollback {
+		if txSuccessCount == cxSuccessCount {
+			return "aborted"
+		}
+		return "aborting"
+	}
+	if txSuccessCount == txCount {
+		return "completed"
+	}
+	return "pending"
+}
+
+func (s *Saga) updateStep(step Step, status Status) {
+	// Check if the logs already contains the event.
+	state, ok := s.state[step.Name]
+	if !ok {
+		panic("step not found")
+	}
+	state.Status = status
+	s.state[step.Name] = state
+	s.Logs = append(s.Logs, Log{
+		Name:      step.Name,
+		Status:    status,
+		CreatedAt: time.Now(),
+	})
+}
+func (s *Saga) Emit(event Event) {
+	for _, step := range s.Steps {
+		if step.Then == event {
+			s.updateStep(step, StatusSuccess)
+			break
+		}
+		if step.Else == event {
+			s.updateStep(step, StatusFailed)
+			break
+		}
+	}
+	for _, step := range s.Steps {
+		for _, evt := range step.When {
+			if evt == event {
+				if !step.IsNoop() {
+					// Check if the logs already contains the event.
+					// Don't append if this is the last event.
+					s.Logs = append(s.Logs, Log{
+						Name:      step.Name,
+						Status:    StatusPending,
+						CreatedAt: time.Now(),
+					})
+				}
+				fmt.Println("starting", step.Name)
+				// If error is unrecoverable, then add the error log and exit.
+				break
+			}
+		}
+	}
+}
+
+func (s *Saga) apply(logs ...Log) {
+	if len(s.state) != 0 {
+		panic("cannot apply logs")
+	}
+
+	for _, l := range logs {
+		state, ok := s.state[l.Name]
+		if !ok {
+			panic("invalid state")
+		}
+		status, can := state.Status.To(l.Status)
+		if !can {
+			panic("invalid step transition")
+		}
+		state.Status = status
+		s.state[l.Name] = state
+	}
+}
+```
+	})
