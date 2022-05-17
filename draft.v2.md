@@ -1,3 +1,4 @@
+```go
 // You can edit this code!
 // Click here and start typing.
 package main
@@ -279,3 +280,142 @@ func (s *Saga) Emit(ctx context.Context, event string) error {
 	}
 	return nil
 }
+```
+
+Draft v3
+
+```go
+// You can edit this code!
+// Click here and start typing.
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+)
+
+func main() {
+	saga := NewSaga("saga-1")
+	saga.AddStep(NewCreateBookingStep())
+	saga.Emit(context.Background(), "INIT", nil)
+
+	pretty(saga)
+}
+
+func pretty(data any) {
+	b, err := json.MarshalIndent(data, "", " ")
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(string(b))
+}
+
+func NewCreateBookingStep() *Step {
+	return &Step{
+		Name:   "CreateBooking",
+		Status: "pending",
+		Func: func(ctx context.Context, payload any) error {
+			return fmt.Errorf("%w: bad request", ErrTerminal)
+		},
+		When: []Event{"INIT"},
+		Then: "BOOKING_CREATED",
+		Else: "BOOKING_FAILED",
+	}
+}
+
+var ErrTerminal = errors.New("terminal error")
+
+type Event string
+type Status string
+
+type Step struct {
+	Name           string
+	Status         Status
+	Func           func(ctx context.Context, event any) error `json:"-"`
+	When           []Event
+	Then           Event
+	Else           Event
+	IsCompensation bool
+}
+
+type Log struct {
+	Name           string
+	Status         string
+	IsCompensation bool
+}
+
+type Saga struct {
+	ID             string
+	Steps          []Step
+	Status         string
+	Logs           []Log
+	IsCompensation bool
+}
+
+func NewSaga(id string) *Saga {
+	return &Saga{
+		ID: id,
+	}
+}
+
+func (s *Saga) AddStep(step *Step) {
+	s.Steps = append(s.Steps, *step)
+}
+
+func (s *Saga) Emit(ctx context.Context, event Event, payload any) error {
+	if len(s.Logs) > 0 {
+		var prev *Step
+		for _, s := range s.Steps {
+			if s.Then == event {
+				prev = &s
+				break
+			}
+		}
+		if prev == nil {
+			panic("step not found")
+		}
+
+		for _, l := range s.Logs {
+			if l.Name == prev.Name {
+				panic(fmt.Errorf("duplicate event: %s", event))
+			}
+		}
+		// Mark the previous as completed.
+		s.Logs = append(s.Logs, Log{
+			Name:           prev.Name,
+			Status:         "success",
+			IsCompensation: prev.IsCompensation,
+		})
+	}
+	var next *Step
+	for _, s := range s.Steps {
+		for _, e := range s.When {
+			if e == event {
+				next = &s
+				break
+			}
+		}
+	}
+	if next == nil {
+		panic("step not found")
+	}
+	// Start the current.
+	s.Logs = append(s.Logs, Log{
+		Name:           next.Name,
+		Status:         "pending",
+		IsCompensation: next.IsCompensation,
+	})
+	err := next.Func(ctx, payload)
+	if errors.Is(err, ErrTerminal) {
+		s.Logs = append(s.Logs, Log{
+			Name:           next.Name,
+			Status:         "failed",
+			IsCompensation: next.IsCompensation,
+		})
+	}
+	return err
+}
+```
+		
